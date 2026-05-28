@@ -86,6 +86,45 @@ const hRes = (b, s = 200) => new Response(b, {
 
 const oErr = (e, d, s = 400) => jRes({ error: e, error_description: d }, s);
 
+// ─── JWT re-signing ───────────────────────────────────────────────────────────
+const b64uDec = s => {
+  const pad = s.length % 4 ? '='.repeat(4 - s.length % 4) : '';
+  return atob(s.replace(/-/g, '+').replace(/_/g, '/') + pad);
+};
+
+async function reSignIdToken(idToken, newIss, newAud, env) {
+  if (!env.SIGNING_PRIVATE_KEY || !idToken) return idToken;
+  try {
+    const parts = idToken.split('.');
+    if (parts.length !== 3) return idToken;
+    const payload = JSON.parse(b64uDec(parts[1]));
+    payload.iss = newIss;
+    if (newAud) payload.aud = newAud;
+    const header  = { alg: 'RS256', typ: 'JWT', kid: env.SIGNING_KEY_ID ?? 'crossgate-1' };
+    const hdr     = b64u(new TextEncoder().encode(JSON.stringify(header)));
+    const pld     = b64u(new TextEncoder().encode(JSON.stringify(payload)));
+    const input   = `${hdr}.${pld}`;
+    const privKey = await crypto.subtle.importKey(
+      'jwk', JSON.parse(env.SIGNING_PRIVATE_KEY),
+      { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['sign']
+    );
+    const sig = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', privKey, new TextEncoder().encode(input));
+    return `${input}.${b64u(sig)}`;
+  } catch (e) {
+    console.error('reSignIdToken failed:', e);
+    return idToken;
+  }
+}
+
+// ─── GET /jwks ────────────────────────────────────────────────────────────────
+function onJwks(env) {
+  if (!env.SIGNING_PUBLIC_KEY) return jRes({ keys: [] });
+  try {
+    const key = JSON.parse(env.SIGNING_PUBLIC_KEY);
+    return jRes({ keys: [{ ...key, use: 'sig', alg: 'RS256', kid: env.SIGNING_KEY_ID ?? 'crossgate-1' }] });
+  } catch { return jRes({ keys: [] }); }
+}
+
 // ─── Rate limiting ────────────────────────────────────────────────────────────
 async function rlOK(ip, env) {
   const k = `rl:${ip}`;
@@ -116,7 +155,7 @@ async function createSession(env, overrides = {}) {
 
   const sess = {
     device_code: dc, user_code: uc, upstream_state: us, status: 'pending',
-    downstream_redirect_uri: '', downstream_state: '',
+    downstream_redirect_uri: '', downstream_state: '', downstream_client_id: null,
     downstream_code_challenge: null, downstream_code_challenge_method: null,
     downstream_scope: 'openid profile email',
     pkce_v: null, relay_code: null, tokens: null, created_at: Date.now(),
@@ -137,14 +176,24 @@ function onDiscover(env) {
     issuer:                               b,
     authorization_endpoint:               `${b}/authorize`,
     token_endpoint:                       `${b}/token`,
+    end_session_endpoint:                 `${b}/logout`,
     device_authorization_endpoint:        `${b}/device_authorization`,
-    jwks_uri:                             `${env.UPSTREAM_ISSUER}/.well-known/jwks.json`,
+    jwks_uri:                             `${b}/jwks`,
     response_types_supported:             ['code'],
     grant_types_supported:                ['authorization_code', 'urn:ietf:params:oauth:grant-type:device_code'],
     code_challenge_methods_supported:     ['S256'],
     subject_types_supported:              ['public'],
     id_token_signing_alg_values_supported:['RS256'],
   });
+}
+
+// ─── GET /logout — RP-initiated logout ───────────────────────────────────────
+function onLogout(url, env) {
+  const postLogoutUri = url.searchParams.get('post_logout_redirect_uri');
+  const logoutBase    = env.LOGOUT_URL ?? `${env.UPSTREAM_ISSUER}/oidc/logout`;
+  const target        = new URL(logoutBase);
+  if (postLogoutUri) target.searchParams.set('returnTo', postLogoutUri);
+  return Response.redirect(target.toString(), 302);
 }
 
 // ─── GET /authorize — Device 1 entry ─────────────────────────────────────────
@@ -158,6 +207,7 @@ async function onAuthorize(url, env) {
   const sess = await createSession(env, {
     downstream_redirect_uri:          ru,
     downstream_state:                 p.get('state') ?? '',
+    downstream_client_id:             p.get('client_id') ?? null,
     downstream_code_challenge:        p.get('code_challenge') ?? null,
     downstream_code_challenge_method: p.get('code_challenge_method') ?? null,
     downstream_scope:                 p.get('scope') ?? 'openid profile email',
@@ -283,8 +333,9 @@ async function onToken(req, env) {
     if (sess.status === 'pending')   return oErr('authorization_pending',  'Authorization pending',   400);
     if (sess.status !== 'authenticated') return oErr('access_denied',      'Access denied',           400);
     // Return tokens directly for RFC 8628 flow
-    const { access_token, id_token, token_type, expires_in, refresh_token } = sess.tokens;
-    return jRes({ access_token, id_token, token_type: token_type ?? 'Bearer', expires_in,
+    const { access_token, id_token: raw8628, token_type, expires_in, refresh_token } = sess.tokens;
+    const id_token8628 = await reSignIdToken(raw8628, env.WORKER_BASE_URL, sess.downstream_client_id, env);
+    return jRes({ access_token, id_token: id_token8628, token_type: token_type ?? 'Bearer', expires_in,
       ...(refresh_token ? { refresh_token } : {}) });
   }
 
@@ -318,7 +369,8 @@ async function onToken(req, env) {
   // Invalidate relay code (one-time use)
   await env.SESSIONS.delete(`relay:${code}`);
 
-  const { access_token, id_token, token_type, expires_in, refresh_token } = sess.tokens;
+  const { access_token, id_token: rawIdToken, token_type, expires_in, refresh_token } = sess.tokens;
+  const id_token = await reSignIdToken(rawIdToken, env.WORKER_BASE_URL, sess.downstream_client_id, env);
   return jRes({ access_token, id_token, token_type: token_type ?? 'Bearer', expires_in,
     ...(refresh_token ? { refresh_token } : {}) });
 }
@@ -597,8 +649,9 @@ export default {
     const method = request.method;
 
     try {
-      // OIDC discovery
+      // OIDC discovery + JWKS
       if (path === '/.well-known/openid-configuration' && method === 'GET') return onDiscover(env);
+      if (path === '/jwks'                             && method === 'GET')  return onJwks(env);
 
       // Device 1: start cross-device flow
       if (path === '/authorize'            && method === 'GET')  return onAuthorize(url, env);
@@ -617,6 +670,9 @@ export default {
 
       // Device 1 status polling
       if (path === '/poll'                 && method === 'GET')  return onPoll(url, env);
+
+      // RP-initiated logout
+      if (path === '/logout'               && method === 'GET')  return onLogout(url, env);
 
       // Device 2: manual code entry page
       if (path === '/'                     && method === 'GET')
