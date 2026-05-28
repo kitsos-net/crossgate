@@ -26,8 +26,3 @@ UPSTREAM_ISSUER = "https://auth.kitsos.net"
 # UPSTREAM_CLIENT_ID      = Worker's client_id beim Upstream-OIDC-Provider
 # UPSTREAM_CLIENT_SECRET  = Worker's client_secret
 # LOGOUT_URL              = z.B. https://auth.kitsos.net/logout
-
-# ─── Custom Domain ───────────────────────────────────────────────────────────
-[[routes]]
-pattern   = "crossgate.kitsos.net/*"
-zone_name = "kitsos.net"
