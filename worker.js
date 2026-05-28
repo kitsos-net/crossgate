@@ -482,7 +482,10 @@ function renderQRPage(dc, uc, vurl, env) {
 <div id=pv class=fadein style="display:flex;flex-direction:column;align-items:center;gap:.8rem;width:100%">
 
   <div class=qr-box>
-    <canvas id=qrc></canvas>
+    <img id=qrc style="display:block;width:190px;height:190px;border-radius:4px"
+         src="https://api.qrserver.com/v1/create-qr-code/?size=190x190&format=svg&data=${encodeURIComponent(vurl)}"
+         onerror="this.style.display='none';document.getElementById('qrfb').style.display='block'"
+         alt="QR Code">
     <p id=qrfb style="display:none;padding:1.25rem 1rem;font-size:.8rem;color:#555;max-width:160px">
       QR-Code konnte nicht geladen werden
     </p>
@@ -525,21 +528,7 @@ function renderQRPage(dc, uc, vurl, env) {
 
   const script = `
 const DC=${JSON.stringify(dc)};
-const VURL=${JSON.stringify(vurl)};
 const EXP=Date.now()+${SESSION_TTL * 1000};
-
-// ── QR Code ──────────────────────────────────────────────────────────────────
-(s=>{
-  s.src='https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js';
-  s.onload=()=>QRCode.toCanvas(document.getElementById('qrc'),VURL,{
-    width:190,margin:1,color:{dark:'#18182e',light:'#ffffff'}
-  });
-  s.onerror=()=>{
-    document.getElementById('qrc').style.display='none';
-    document.getElementById('qrfb').style.display='block';
-  };
-  document.head.appendChild(s);
-})(document.createElement('script'));
 
 // ── Countdown ─────────────────────────────────────────────────────────────────
 const ti=document.getElementById('ti'), cd=document.getElementById('cd');
