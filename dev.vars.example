@@ -1,0 +1,6 @@
+# Lokale Entwicklung – NIEMALS echte Werte committen!
+# Kopiere diese Datei zu .dev.vars und fülle sie aus.
+
+UPSTREAM_CLIENT_ID=your-client-id
+UPSTREAM_CLIENT_SECRET=your-client-secret
+LOGOUT_URL=https://auth.kitsos.net/logout

@@ -3,19 +3,16 @@ main               = "worker.js"
 compatibility_date = "2025-01-01"
 
 # ─── KV Namespace ────────────────────────────────────────────────────────────
-# Zuerst erstellen:
-#   wrangler kv:namespace create SESSIONS
-# Dann die ID unten eintragen.
 [[kv_namespaces]]
 binding = "SESSIONS"
-id      = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+id      = "2baf32ee964d4c3eb74bb6e435036e6f"
 
 # ─── Public env vars ─────────────────────────────────────────────────────────
 [vars]
-WORKER_BASE_URL = "https://device.kitsos.net"
-UPSTREAM_ISSUER = "https://DEIN_AUTH0_DOMAIN.auth0.com"
+WORKER_BASE_URL = "https://crossgate.kitsos.net"
+UPSTREAM_ISSUER = "https://auth.kitsos.net"
 
-# Optional: explizite Endpoint-Overrides (Standard: {ISSUER}/authorize und /oauth/token)
+# Optional: explizite Endpoint-Overrides (Standard: {ISSUER}/authorize und {ISSUER}/oauth/token)
 # UPSTREAM_AUTH_ENDPOINT  = "https://..."
 # UPSTREAM_TOKEN_ENDPOINT = "https://..."
 
@@ -28,34 +25,9 @@ UPSTREAM_ISSUER = "https://DEIN_AUTH0_DOMAIN.auth0.com"
 #
 # UPSTREAM_CLIENT_ID      = Worker's client_id beim Upstream-OIDC-Provider
 # UPSTREAM_CLIENT_SECRET  = Worker's client_secret
-# LOGOUT_URL              = z.B. https://kitsos.eu.auth0.com/v2/logout?...
+# LOGOUT_URL              = z.B. https://auth.kitsos.net/logout
 
 # ─── Custom Domain ───────────────────────────────────────────────────────────
-# Route im Cloudflare Dashboard setzen:
-# Workers & Pages → cross-device-auth → Settings → Triggers → Custom Domains
-# Domain: device.kitsos.net
-
-# ─── Setup-Checkliste ────────────────────────────────────────────────────────
-#
-# 1. KV Namespace erstellen:
-#      wrangler kv:namespace create SESSIONS
-#    → ID in dieser Datei eintragen (oben)
-#
-# 2. Secrets setzen:
-#      wrangler secret put UPSTREAM_CLIENT_ID
-#      wrangler secret put UPSTREAM_CLIENT_SECRET
-#      wrangler secret put LOGOUT_URL
-#
-# 3. Auth0-Client konfigurieren:
-#    - Allowed Callback URLs: https://device.kitsos.net/callback
-#    - Grant Types: Authorization Code (PKCE aktiviert)
-#    - Token Endpoint Authentication: None (PKCE) oder Basic (falls client_secret nötig)
-#
-# 4. Device 1's App (OIDC-Client) konfigurieren:
-#    - Authorization Endpoint: https://device.kitsos.net/authorize
-#    - Token Endpoint:         https://device.kitsos.net/token
-#    - JWKS URI:               https://DEIN_AUTH0_DOMAIN.auth0.com/.well-known/jwks.json
-#      (id_tokens werden direkt vom Upstream ausgestellt und mit dessen JWKS verifiziert)
-#
-# 5. Deployen:
-#      wrangler deploy
+[[routes]]
+pattern   = "crossgate.kitsos.net/*"
+zone_name = "kitsos.net"
